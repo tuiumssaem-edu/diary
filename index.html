@@ -83,14 +83,10 @@ details{font-size:.85rem;margin-top:10px}
 
 <section>
   <h2><span>5</span>저장하기</h2>
-  <button class="btn" id="save">☁️ 구글 시트에 저장</button>
+  <button class="btn" id="save">💾 파일로 저장</button>
   <button class="btn sub" id="copy">📋 복사하기</button>
   <div id="msg"></div>
-  <details><summary>선생님 설정</summary>
-    <div class="box" style="margin-top:8px"><input id="url" placeholder="Apps Script 웹 앱 주소 (https://script.google.com/macros/s/.../exec)"><button class="x" data-t="url" aria-label="지우기">✕</button></div>
-    <div class="box" style="margin-top:8px"><input id="code" placeholder="교사 코드 (README에서 정한 비밀번호)"><button class="x" data-t="code" aria-label="지우기">✕</button></div>
-    <p class="hint">이 기기에만 저장돼요. AI 코치를 쓰면 일기 글이 AI 서비스로 전송되니, 학생 실명 등 개인정보는 쓰지 않도록 지도해 주세요.</p>
-  </details>
+  <p class="hint" style="margin-top:10px">AI 코치를 쓰면 일기 글이 AI 서비스(Google Gemini)로 전송되니, 학생 실명 등 개인정보는 쓰지 않도록 지도해 주세요.</p>
 </section>
 </div></main>
 <script>
@@ -176,33 +172,27 @@ $('make').onclick=()=>{const raw=compose();if(!raw){$('fb').hidden=false;$('fb')
  m+=n>=5?'누가, 언제, 어디서를 꼼꼼히 써서 장면이 눈에 그려져요. ':'다음에는 빈 칸도 하나 더 채워 보면 더 멋진 일기가 될 거예요. ';
  $('fb').hidden=false;$('fb').textContent='👩‍🏫 선생님 한마디\n'+m+'이제 아래에서 AI 코치와 더 풍부하게 만들어 볼까요? 😊'};
 
-// 설정·통신
-$('url').value=localStorage.getItem('sheetUrl')||'';$('code').value=localStorage.getItem('teacherCode')||'';
-$('url').addEventListener('input',()=>localStorage.setItem('sheetUrl',$('url').value.trim()));
-$('code').addEventListener('input',()=>localStorage.setItem('teacherCode',$('code').value.trim()));
+// 통신 (Cloudflare Worker 주소)
+const API_URL='https://diary-coach.tuiumssaem.workers.dev/';
 const msg=(t,ok)=>{$('msg').textContent=t;$('msg').style.color=ok?'#2e7d32':'#b3261e'};
-async function post(p){const r=await fetch($('url').value.trim(),{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({...p,code:$('code').value.trim()})});return r.json()}
+async function post(p){const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});return r.json()}
 
 // AI 코칭
 $('coach').onclick=async()=>{const draft=$('diary').value.trim();
  if(!draft)return msg('먼저 "일기 만들기"로 내가 쓴 글을 만들어 주세요.');
- if(!$('url').value.trim())return msg('선생님 설정에 주소를 먼저 넣어 주세요. (README 참고)');
  const b=$('coach');b.disabled=true;b.textContent='🤖 AI 코치가 생각 중이에요...';msg('');
- try{const d=await post({action:'coach',date:$('date').value,weather,draft,fields:vals()});
+ try{const d=await post({date:$('date').value,weather,draft,fields:vals()});
   if(!d.ok)throw new Error(d.error||'알 수 없는 오류');
   $('ai').value=d.diary;$('aifb').hidden=false;$('aifb').textContent='👩‍🏫 AI 선생님 한마디\n'+d.feedback}
  catch(e){msg('AI 코치를 불러오지 못했어요: '+e.message)}
  finally{b.disabled=false;b.textContent='🤖 AI 코치에게 부탁하기'}};
 
 // 저장
-$('save').onclick=async()=>{const mine=$('diary').value.trim();
- if(!mine)return msg('먼저 일기를 만들어 주세요.');
- if(!$('url').value.trim())return msg('선생님 설정에 구글 시트 주소를 먼저 넣어야 해요. (README 참고)');
- try{const d=await post({action:'save',date:$('date').value,weather,mine,ai:$('ai').value.trim()});
-  if(!d.ok)throw new Error(d.error);msg('☁️ 저장했어요!'+($('ai').value.trim()?'':' (AI 글은 비어 있어요)'),true)}
- catch(e){msg('저장 결과를 확인하지 못했어요('+e.message+'). 구글 시트에서 확인한 뒤, 없을 때만 다시 눌러 주세요.')}};
-$('copy').onclick=async()=>{const t=`${$('date').value} ${weather}\n[내가 쓴 글]\n${$('diary').value}\n\n[AI가 다듬은 글]\n${$('ai').value}`;
- try{await navigator.clipboard.writeText(t);msg('📋 복사했어요!',true)}catch(e){msg('복사하지 못했어요. 글을 직접 선택해 복사해 주세요.')}};
+const allText=()=>`${$('date').value} ${weather}\n[내가 쓴 글]\n${$('diary').value}\n\n[AI가 다듬은 글]\n${$('ai').value}`;
+$('save').onclick=()=>{if(!$('diary').value.trim())return msg('먼저 일기를 만들어 주세요.');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+allText()],{type:'text/plain;charset=utf-8'}));
+ a.download=`일기_${$('date').value}.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);msg('💾 파일로 저장했어요!',true)};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(allText());msg('📋 복사했어요!',true)}catch(e){msg('복사하지 못했어요. 글을 직접 선택해 복사해 주세요.')}};
 </script>
 </body>
 </html>
