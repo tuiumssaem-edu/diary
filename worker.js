@@ -1,5 +1,5 @@
 // 오늘의 일기 도우미 - AI 코칭 서버 (Cloudflare Workers + Gemini)
-// Worker 설정 → 변수 및 비밀: GEMINI_API_KEY (비밀, 필수), GEMINI_MODEL (선택), ALLOWED_ORIGINS (선택, 쉼표로 구분)
+// Worker 설정 → 변수 및 비밀: GEMINI_API_KEY (비밀, 필수), GEMINI_MODEL (선택, 쉼표로 여러 개 = 순서대로 시도), ALLOWED_ORIGINS (선택, 쉼표로 구분)
 const SYSTEM =
   '너는 특수교육 교사를 돕는 따뜻한 일기 코치다. 학생이 쓴 일기를 조금 더 풍부하게 다듬는다.\n' +
   '규칙:\n' +
@@ -43,20 +43,29 @@ export default {
         ', 무엇을=' + (f.what || '') + ', 어떻게=' + (f.how || '') + ', 기분=' + (f.feel || '') +
         '\n학생의 일기:\n' + draft;
 
-      const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-      const r = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM }] },
-            contents: [{ role: 'user', parts: [{ text: user }] }],
-            generationConfig: { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 1024 }
-          })
-        }
-      );
-      const j = await r.json();
+      // 앞 모델이 바쁘면(429/500/503) 다음 모델로 넘어가요
+      const models = (env.GEMINI_MODEL || 'gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite')
+        .split(',').map(s => s.trim()).filter(Boolean);
+      let r, j;
+      for (const model of models) {
+        r = await fetch(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: SYSTEM }] },
+              contents: [{ role: 'user', parts: [{ text: user }] }],
+              generationConfig: { responseMimeType: 'application/json', temperature: 0.7, maxOutputTokens: 4096 }
+            }),
+            signal: AbortSignal.timeout(25000)
+          }
+        ).catch(() => null);
+        if (!r) continue;
+        j = await r.json();
+        if (r.ok || ![429, 500, 503].includes(r.status)) break;
+      }
+      if (!r) return json({ ok: false, error: 'AI가 응답하지 않아요. 잠시 뒤에 다시 해 주세요.' }, 504);
       if (!r.ok) {
         const busy = r.status === 429 ? '오늘 무료 사용량이 다 찼거나 너무 자주 눌렀어요. 잠시 뒤에 다시 해 주세요.' : '';
         return json({ ok: false, error: busy || (j.error && j.error.message) || 'AI 호출 실패' }, 502);
